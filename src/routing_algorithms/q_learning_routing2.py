@@ -42,9 +42,28 @@ class QMAR(BASE_routing):
             self.drone.neighbor_table[id_j, 9] = Q_value_i_j + alpha * (self.minReward + gamma * Q_value_best_action - Q_value_i_j)
 
 
-    def computeReward(self, outcome, delay):
-        return self.w * math.exp(delay) + (1 - self.w) * (self.drone.residual_energy/self.drone.initial_energy)
+    def computeReward(self, outcome, delay, neighbor_id):
+        """
+        Calculate the immediate reward
+        """
+       # 1 Keep track of the largest delay we've seen (like C's orignal code nb_maxdelay)
+        if delay > self.max_delay:
+            self.max_delay = delay
 
+        # 2 Find the neighbor drone and get its energy (normalised between 0 and 1)
+        neighbor = next(d for d in self.simulator.drones if d.identifier == neighbor_id)
+        e_neighbor = neighbor.residual_energy / neighbor.initial_energy
+
+        # 3 Normalise the delay and apply negative exponential
+        norm_delay = delay / self.max_delay
+        exp_delay = math.exp(-norm_delay)   
+
+        # 4 use the paper's fixed weight 
+        fixed_w = 0.8
+
+        # 5 Combine into the reward
+        reward = fixed_w * exp_delay + (1 - fixed_w) * e_neighbor
+        return reward
 
     def relay_selection(self, opt_neighbors, data):
 
