@@ -144,10 +144,11 @@ class QMAR(BASE_routing):
                 chosen = random.choice(opt_neighbors)
         return chosen
 
-        return chosen
-
     def computeActualVel(self, j, node_j, distance_i):
-
+        """
+        how much closer the packet will get to the depot if it’s sent to neighbour j
+        """
+        
         #we try to estimate the position of node j at time t3, so when the packet should arrive
         x2 = self.drone.neighbor_table[j, 4]
         y2 = self.drone.neighbor_table[j, 5]
