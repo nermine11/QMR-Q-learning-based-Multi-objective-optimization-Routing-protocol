@@ -9,14 +9,19 @@ class QMAR(BASE_routing):
 
     def __init__(self, drone, simulator):
         BASE_routing.__init__(self, drone, simulator)
-        self.maxReward = 5
-        self.minReward = -5
-        self.w = 0.7
-        self.max_delay = 1.0 
+        self.maxReward = 5      # The biggest possoble reward (when the packet reaches the depot)
+        self.minReward = -5     # The worst possible reward (when the packet is lost or reaches a dead end).
+        self.w = 0.7            # A record with the largest delay this drone has ever seen ,
+        self.max_delay = 1.0    # Start with 1 to avoid dividing by zero
 
     def feedback(self, outcome, id_j, Q_value_best_action):
         """
-        Feedback returned when the packet arrives at the depot or
+        Feedback returned when the packet arrives at the depot or not
+        outcome: what happened to the packet
+        id_j: id of the neighbor that received or failed to receive the packet
+        Q_value_best_action: the best Q_value that neighbor j itslef has for reaching 
+        the destination
+
         """
         alpha = self.drone.neighbor_table[id_j, 10]
         gamma = self.drone.neighbor_table[id_j, 7]
@@ -32,7 +37,7 @@ class QMAR(BASE_routing):
             reward = self.computeReward(outcome, delay)
             #Update Q table
             self.drone.neighbor_table[id_j, 9] = Q_value_i_j + alpha * (reward + gamma * Q_value_best_action - Q_value_i_j)
-
+        # failure to reach j
         else:
             self.drone.neighbor_table[id_j, 9] = Q_value_i_j + alpha * (self.minReward + gamma * Q_value_best_action - Q_value_i_j)
 
