@@ -13,6 +13,7 @@ def main():
     seed_results = []
     try:
         for nb_drones in drones:
+            # run the experiment 30 times with a different sed
             for seed in range(1, 31):
                 sim = Simulator(nb_drones, seed, simulation_name=f"test_drone{nb_drones}_seed{seed}")
                 sim.run()

@@ -1,5 +1,5 @@
 from src.routing_algorithms.georouting import GeoRouting
-from src.routing_algorithms.q_learning_routing import QMAR
+from src.routing_algorithms.q_learning_routing2 import QMAR
 from src.routing_algorithms.random_routing import RandomRouting
 from enum import Enum
 
