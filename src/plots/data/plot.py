@@ -42,3 +42,26 @@ plt.legend()
 plt.savefig('pdr_vs_drones.png', dpi=150)
 plt.show()
 
+# --- Average Delay ---
+plt.figure(figsize=(7,5))
+plt.errorbar(unique_drones, delay_avg, yerr=delay_std, marker='s', capsize=5,
+             color='red', label='Baseline (fixed ω=0.8)')
+plt.xlabel('Number of Drones')
+plt.ylabel('Average End‑to‑End Delay (s)')
+plt.title('Average Delay vs Number of Drones')
+plt.grid(True, linestyle='--', alpha=0.7)
+plt.legend()
+plt.savefig('delay_vs_drones.png', dpi=150)
+plt.show()
+
+# --- Total Energy Consumed ---
+plt.figure(figsize=(7,5))
+plt.errorbar(unique_drones, energy_avg, yerr=energy_std, marker='^', capsize=5,
+             color='green', label='Baseline (fixed ω=0.8)')
+plt.xlabel('Number of Drones')
+plt.ylabel('Total Energy Consumed')
+plt.title('Energy Consumption vs Number of Drones')
+plt.grid(True, linestyle='--', alpha=0.7)
+plt.legend()
+plt.savefig('energy_vs_drones.png', dpi=150)
+plt.show()
