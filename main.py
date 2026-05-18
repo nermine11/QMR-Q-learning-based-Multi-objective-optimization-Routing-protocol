@@ -9,30 +9,27 @@ def main():
 
     drones = range(5,35,5)
 
-    '''
-    sim = Simulator(5, 1)
-    sim.run()
-    first_metric = len(sim.metrics.drones_packets_to_depot) / sim.metrics.all_data_packets_in_simulation
-    print(first_metric)
-    sim.close()
-    '''
     #grid_search(drones, alphas, gammas, divs, epsilons, Epsilon(), negRewards)
     seed_results = []
-
-
-    for drone in drones:
-        values = []
-        times = []
-        for seed in range(1, 31):
-            sim = Simulator(drone, seed)
-            sim.run()
-            first_metric = len(sim.metrics.drones_packets_to_depot) / sim.metrics.all_data_packets_in_simulation
-            print(first_metric)
-            sim.close()
-            sim.metrics.other_metrics()
-            second_metric = sim.metrics.packet_mean_delivery_time
-            seed_results.append((drone, seed, first_metric, second_metric))
-    np.save("Seed_Results.npy", np.array(seed_results))
+    try:
+        for nb_drones in drones:
+            for seed in range(1, 31):
+                sim = Simulator(nb_drones, seed, simulation_name=f"test_drone{nb_drones}_seed{seed}")
+                sim.run()
+                # -- Packet Delivery Ratio (PDR) --
+                pdr = len(sim.metrics.drones_packets_to_depot) / sim.metrics.all_data_packets_in_simulation
+                # -- Average End‑to‑End Delay --
+                sim.metrics.other_metrics()
+                avg_delay = sim.metrics.packet_mean_delivery_time
+                # -- Total Energy Consumed (all drones) --
+                energy_consumed = sum(d.initial_energy - d.residual_energy for d in sim.drones)
+                # Store the results
+                seed_results.append((nb_drones, seed, pdr, avg_delay, energy_consumed))
+                sim.close()
+    finally:
+        # This runs even if you press Ctrl+C
+        np.save("./Seed_Results.npy", np.array(seed_results))
+        print(seed_results)
 
 
 if __name__ == "__main__":
