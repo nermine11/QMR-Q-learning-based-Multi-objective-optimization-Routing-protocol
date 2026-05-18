@@ -66,6 +66,9 @@ class QMAR(BASE_routing):
         return reward
 
     def relay_selection(self, opt_neighbors, data):
+        """
+        Decides which neighbor to send the packet to
+        """
 
         packet = data[0]
         candidates = []
@@ -135,6 +138,11 @@ class QMAR(BASE_routing):
             id = self.drone.identifier
         else:
             id = chosen.identifier
+        if random.random() < 0.1:   # 10% exploration like epl in C
+            # pick a random neighbor from the list of possible neighbors
+            if opt_neighbors:
+                chosen = random.choice(opt_neighbors)
+        return chosen
 
         return chosen
 
