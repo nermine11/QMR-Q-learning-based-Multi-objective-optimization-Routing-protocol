@@ -34,7 +34,7 @@ class QMAR(BASE_routing):
         #the packet is arrived to the node j, but it isn't the depot
         elif (outcome == 0):
             delay = self.drone.neighbor_table[id_j, 8] + self.drone.neighbor_table[id_j, 11]
-            reward = self.computeReward(outcome, delay)
+            reward = self.computeReward(outcome, delay, id_j)
             #Update Q table
             self.drone.neighbor_table[id_j, 9] = Q_value_i_j + alpha * (reward + gamma * Q_value_best_action - Q_value_i_j)
         # failure to reach j
