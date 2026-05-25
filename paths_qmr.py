@@ -1,11 +1,11 @@
 import math, random
 import numpy as np
 import networkx as nx
-from qmr_fixed_w import QMAR          # your corrected QMAR class (unchanged except for util replacement)
+from qmr_dynamic_w import QMAR          
 
 # ================== 1. Mock environment ==================
 class MockDrone:
-    def __init__(self, identifier, coords, energy, max_drones, speed=8.0):
+    def __init__(self, identifier, coords, energy, max_drones, speed=0.0):
         self.identifier = identifier          # integer
         self.coords = coords
         self.residual_energy = energy
@@ -13,7 +13,7 @@ class MockDrone:
         self.speed = speed
         self.neighbor_table = np.zeros((max_drones, 13))
         self.neighbor_table[:, 9] = 0.5        # initial Q-values
-        self.communication_range = 200
+        self.communication_range = 200        # communication range large
 
 class MockSimulator:
     def __init__(self, drones, depot_coords):
@@ -28,7 +28,7 @@ class MockPacket:
 # ================== 2. Graph building ==================
 def build_graph():
     G = nx.DiGraph()
-    G.add_node("A", energy=30)
+    G.add_node("A", energy=100)
     G.add_node("B", energy=10)
     G.add_node("C", energy=100)
     G.add_node("D", energy=30)
@@ -41,60 +41,80 @@ def build_graph():
     return G
 
 # ================== 3. Convert graph to mocks with 2D table ==================
-def graph_to_mock_2d(G, depot_coords=(500,500)):
+def graph_to_mock_2d(G, depot_coords=(0,0)):
+    """
+    Convert NetworkX graph to mock drones with fixed positions
+    that ensure positive actual velocity on every forward link.
+    """
     nodes = list(G.nodes())
     max_drones = len(nodes)
-    name_to_id = {name: i for i, name in enumerate(nodes)}
+    name_to_id = {name: i for i, name in enumerate(sorted(nodes))}
+    id_to_name = {i: name for name, i in name_to_id.items()}
+
+    # Fixed coordinates designed so that every edge moves the packet
+    # closer to the depot (0,0). Distances:
+    # D (0,0), B (300,0), E (100,100), C (200,200), A (500,0)
+    fixed_positions = {
+        "A": (500, 0),
+        "B": (350, 0),
+        "C": (400, 150),
+        "D": (0, 0),
+        "E": (200, 150)
+    }
 
     drones = []
     drone_dict = {}
+
     for name in nodes:
         drone_id = name_to_id[name]
-        pos = (random.randint(0,500), random.randint(0,500))
+        pos = fixed_positions[name]
         energy = G.nodes[name]['energy']
         drone = MockDrone(drone_id, pos, energy, max_drones)
         drone.residual_energy = energy
         drones.append(drone)
         drone_dict[drone_id] = drone
 
-    # fill neighbour tables
+    # Fill neighbour tables (both directions)
     for u, v, data in G.edges(data=True):
-        uid = name_to_id[u]
-        vid = name_to_id[v]
         delay = data['delay']
 
         # u -> v
-        table_u = drone_dict[uid].neighbor_table
-        v_drone = drone_dict[vid]
-        table_u[vid, 0] = v_drone.coords[0] - 10 # previous x coordinate of neighbor
-        table_u[vid, 1] = v_drone.coords[1] - 10 # previous y coordinate of neighbor
-        table_u[vid, 4] = v_drone.coords[0]      # current X coordinate of neighbor
-        table_u[vid, 5] = v_drone.coords[1]      # current Y coordinate of neighbor
-        table_u[vid, 6] = 0                      # timestamp of last positio update
-        table_u[vid, 7] = 0.9                    # discount factor  
-        table_u[vid, 8] = delay                   
-        table_u[vid, 9] = 0.5                    # intial q  value for the neighbor
-        table_u[vid,10] = 0.3                    # learning rate
-        table_u[vid,11] = 0                       # queue delay
-        table_u[vid,12] = 1.0                     # link quality
+        src_id = name_to_id[u]
+        dst_id = name_to_id[v]
+        src_drone = drone_dict[src_id]
+        dst_drone = drone_dict[dst_id]
+        tbl = src_drone.neighbor_table
+        tbl[dst_id, 0] = dst_drone.coords[0] - 10  # previous x coordinate of neighbor
+        tbl[dst_id, 1] = dst_drone.coords[1] - 10  # previous y coordinate of neighbor
+        tbl[dst_id, 4] = dst_drone.coords[0]       # current X coordinate of neighbor
+        tbl[dst_id, 5] = dst_drone.coords[1]       # current Y coordinate of neighbor
+        tbl[dst_id, 6] = 0                         # timestamp of last positio update
+        tbl[dst_id, 7] = 0.9                       # discount factor 
+        tbl[dst_id, 8] = delay
+        tbl[dst_id, 9] = 0.5                       # intial q  value for the neighbor
+        tbl[dst_id,10] = 0.3                       # learning rate
+        tbl[dst_id,11] = 0                         # queue delay
+        tbl[dst_id,12] = 1.0                       # link quality
 
-        # v -> u (same way)
-        table_v = drone_dict[vid].neighbor_table
-        u_drone = drone_dict[uid]
-        table_v[uid, 0] = u_drone.coords[0] - 10
-        table_v[uid, 1] = u_drone.coords[1] - 10
-        table_v[uid, 4] = u_drone.coords[0]
-        table_v[uid, 5] = u_drone.coords[1]
-        table_v[uid, 6] = 0
-        table_v[uid, 7] = 0.9
-        table_v[uid, 8] = delay
-        table_v[uid, 9] = 0.5
-        table_v[uid,10] = 0.3
-        table_v[uid,11] = 0
-        table_v[uid,12] = 1.0
+        # v -> u (reverse)
+        src_id = name_to_id[v]
+        dst_id = name_to_id[u]
+        src_drone = drone_dict[src_id]
+        dst_drone = drone_dict[dst_id]
+        tbl = src_drone.neighbor_table
+        tbl[dst_id, 0] = dst_drone.coords[0] - 10
+        tbl[dst_id, 1] = dst_drone.coords[1] - 10
+        tbl[dst_id, 4] = dst_drone.coords[0]
+        tbl[dst_id, 5] = dst_drone.coords[1]
+        tbl[dst_id, 6] = 0
+        tbl[dst_id, 7] = 0.9
+        tbl[dst_id, 8] = delay
+        tbl[dst_id, 9] = 0.5
+        tbl[dst_id,10] = 0.3
+        tbl[dst_id,11] = 0
+        tbl[dst_id,12] = 1.0
 
     sim = MockSimulator(drones, depot_coords)
-    id_to_name = {v: k for k, v in name_to_id.items()}   # <-- ADD THIS
     return sim, drone_dict, name_to_id, id_to_name
 
 # ================== 4. Forward packet ==================
@@ -121,7 +141,6 @@ def forward_packet(start_id, dest_id, drone_dict, qmar_dict, sim):
 
         if not opt_neighbors:
             break
-
         # Relay selection
         chosen = qmar.relay_selection(opt_neighbors, (MockPacket(dest_id),))
         if chosen == "RHP":
@@ -151,8 +170,7 @@ if __name__ == "__main__":
     dest_id = name_to_id[dest_name]
 
     qmar_dict = {}
-    print("Fixed W: 0.8\n")
-    for pkt in range(1,6):
+    for pkt in range(1,50):
         path_ids = forward_packet(start_id, dest_id, drone_dict, qmar_dict, sim)
         path_names = [id_to_name[i] for i in path_ids]
         print(f"Packet {pkt}: {' → '.join(path_names)}")
