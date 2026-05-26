@@ -1,7 +1,8 @@
+import argparse
 import math, random
 import numpy as np
 import networkx as nx
-from qmr_dynamic_w import QMAR          
+import matplotlib.pyplot as plt
 
 # ================== 1. Mock environment ==================
 class MockDrone:
@@ -22,13 +23,13 @@ class MockSimulator:
         self.cur_step = 0
 
 class MockPacket:
-    def __init__(self, dest, creation_step=0):
+    def __init__(self, creation_step=0):
         self.time_step_creation = creation_step
 
 # ================== 2. Graph building ==================
 def build_graph():
     G = nx.DiGraph()
-    G.add_node("A", energy=100)
+    G.add_node("A", energy=30)
     G.add_node("B", energy=10)
     G.add_node("C", energy=100)
     G.add_node("D", energy=30)
@@ -159,8 +160,23 @@ def forward_packet(start_id, dest_id, drone_dict, qmar_dict, sim):
 
     return path     # only return after loop finishes
 
+
 # ================== 5. Main ==================
 if __name__ == "__main__":
+
+    parser = argparse.ArgumentParser(
+                        prog='QMR',
+                        description='Choose algo version',
+                        epilog='')
+    parser.add_argument("-m", "--mode", choices=["fixed, dynamic"], default="fixed",
+                         help="Weight mode: fixed (ω=0.8) or dynamic (battery-dependent) + doesn't depend on velocity.")
+    args = parser.parse_args()
+    if args.mode == "fixed":
+        from qmr_fixed_w import QMAR
+        print(f"Running with FIXED ω = 0.8")
+    else:
+        from qmr_dynamic_w import QMAR
+        print(f"Running with DYNAMIC ω (own battery < 50% → ω=0.8, else ω=0.3)")
     G = build_graph()
     sim, drone_dict, name_to_id, id_to_name = graph_to_mock_2d(G)
 
