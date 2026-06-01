@@ -168,7 +168,7 @@ if __name__ == "__main__":
                         prog='QMR',
                         description='Choose algo version',
                         epilog='')
-    parser.add_argument("-m", "--mode", choices=["fixed, dynamic"], default="fixed",
+    parser.add_argument("-m", "--mode", choices=["fixed", "dynamic"], default="fixed",
                          help="Weight mode: fixed (ω=0.8) or dynamic (battery-dependent) + doesn't depend on velocity.")
     args = parser.parse_args()
     if args.mode == "fixed":
@@ -177,6 +177,7 @@ if __name__ == "__main__":
     else:
         from qmr_dynamic_w import QMAR
         print(f"Running with DYNAMIC ω (own battery < 50% → ω=0.8, else ω=0.3)")
+    print("We assume: 1% battery = 1 minute of activity\n")
     G = build_graph()
     sim, drone_dict, name_to_id, id_to_name = graph_to_mock_2d(G)
 
@@ -192,3 +193,7 @@ if __name__ == "__main__":
         print(f"Packet {pkt}: {' → '.join(path_names)}")
         qa = drone_dict[start_id].neighbor_table
         print(f"         Q(A,B)={qa[name_to_id['B'],9]:.3f}  Q(A,C)={qa[name_to_id['C'],9]:.3f}")
+        # Compute path bottleneck energy (minimum remaining energy along the path)
+        path_energies = [G.nodes[name]['energy'] for name in path_names]
+        bottleneck = min(path_energies)
+        print(f"         Bottleneck energy: {bottleneck}% → lifetime: {bottleneck} min ")
