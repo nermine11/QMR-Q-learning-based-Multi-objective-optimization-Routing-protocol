@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """
-Random geometric graph QMR simulation (fixed or dynamic ω).
-Visualization in a separate function.
+Batch experiment: average path lifetime vs. number of nodes.
+Runs QMR for different node counts (with multiple random seeds),
+collects the average bottleneck energy (lifetime) per run,
+and plots the results.
 Usage:
-  python random_qmr.py --mode dynamic --width 600 --length 600 --nodes 15 --range 250
+  python batch_experiment.py --min-nodes 5 --max-nodes 30 --step 5 --mode dynamic
 """
 
 import argparse
@@ -11,6 +13,8 @@ import math
 import random
 import numpy as np
 import networkx as nx
+import matplotlib
+matplotlib.use('Agg')          # non-interactive backend – no popup windows
 import matplotlib.pyplot as plt
 
 # ================== 1. QMAR class ==================
@@ -18,50 +22,40 @@ class QMAR:
     def __init__(self, drone, simulator, mode='fixed'):
         self.drone = drone
         self.simulator = simulator
-        self.mode = mode          # 'fixed' or 'dynamic'
+        self.mode = mode
         self.maxReward = 5
         self.minReward = -5
-        self.max_delay = 1.0      # for delay normalisation
+        self.max_delay = 1.0
 
     def feedback(self, outcome, id_j, Q_value_best_action):
         alpha = self.drone.neighbor_table[id_j, 10]
         gamma = self.drone.neighbor_table[id_j, 7]
         Q_value_i_j = self.drone.neighbor_table[id_j, 9]
 
-        if outcome == 1:          # reached destination
+        if outcome == 1:
             self.drone.neighbor_table[id_j, 9] = Q_value_i_j + alpha * self.maxReward
-        elif outcome == 0:        # normal forward
+        elif outcome == 0:
             delay = self.drone.neighbor_table[id_j, 8] + self.drone.neighbor_table[id_j, 11]
             reward = self.computeReward(delay, id_j)
             self.drone.neighbor_table[id_j, 9] = Q_value_i_j + alpha * (
                 reward + gamma * Q_value_best_action - Q_value_i_j)
-        else:                     # failure
+        else:
             self.drone.neighbor_table[id_j, 9] = Q_value_i_j + alpha * (
                 self.minReward + gamma * Q_value_best_action - Q_value_i_j)
 
     def computeReward(self, delay, neighbor_id):
-        # update max delay
         if delay > self.max_delay:
             self.max_delay = delay
-
-        # neighbour energy (0..1)
         neighbor = next(d for d in self.simulator.drones if d.identifier == neighbor_id)
         e_neighbor = neighbor.residual_energy / neighbor.initial_energy
-
-        # delay score (normalised)
         norm_delay = delay / self.max_delay
         exp_delay = math.exp(-norm_delay)
 
-        # weight
         if self.mode == 'dynamic':
             my_energy_ratio = self.drone.residual_energy / self.drone.initial_energy
-            if my_energy_ratio < 0.5:
-                w = 0.9          # low own battery → speed
-            else:
-                w = 0.3          # high own battery → energy
+            w = 0.9 if my_energy_ratio < 0.5 else 0.3
         else:
-            w = 0.8               # fixed ω
-
+            w = 0.8
         return w * exp_delay + (1 - w) * e_neighbor
 
     def relay_selection(self, opt_neighbors, data):
@@ -73,23 +67,17 @@ class QMAR:
             if node_j not in opt_neighbors:
                 continue
             j = node_j.identifier
-
             deadline = 2001 - (self.simulator.cur_step - packet.time_step_creation)
             if deadline <= 0:
                 deadline = 1
-
             dist_i = math.dist(self.drone.coords, self.simulator.depot_coordinates)
             req_v = dist_i / deadline
-
             actual_v, dist_ij = self.computeActualVel(j, node_j, dist_i)
 
             if actual_v >= req_v:
                 LQ = self.drone.neighbor_table[j, 12]
                 R = self.drone.communication_range
-                if dist_ij > R:
-                    M = 0
-                else:
-                    M = 1 - (dist_ij / R)
+                M = 0 if dist_ij > R else 1 - (dist_ij / R)
                 k = M * LQ
                 candidates.append((node_j, k))
             elif actual_v > 0:
@@ -101,7 +89,6 @@ class QMAR:
             else:
                 return "RHP"
         else:
-            # random tie-breaking among best κ‑weighted Q values
             best_candidates = []
             maxx = -float('inf')
             for cand, k in candidates:
@@ -114,31 +101,21 @@ class QMAR:
                     best_candidates.append(cand)
             chosen = random.choice(best_candidates)
 
-        # ε‑greedy exploration (10 %)
         if random.random() < 0.1 and opt_neighbors:
             chosen = random.choice(opt_neighbors)
-
         return chosen
 
     def computeActualVel(self, j, node_j, distance_i):
-        # positions from neighbour table
         x2 = self.drone.neighbor_table[j, 4]
         y2 = self.drone.neighbor_table[j, 5]
         x1 = self.drone.neighbor_table[j, 0]
         y1 = self.drone.neighbor_table[j, 1]
-
-        if (x2 - x1) != 0:
-            angle_j = math.atan((y2 - y1) / (x2 - x1))
-        else:
-            angle_j = math.atan(0)
-
+        angle_j = math.atan((y2 - y1) / (x2 - x1)) if (x2 - x1) != 0 else 0.0
         delay = self.drone.neighbor_table[j, 8] + self.drone.neighbor_table[j, 11]
         if delay == 0:
             delay = 0.01
-
-        t1 = self.drone.neighbor_table[j, 6]   # timestamp
+        t1 = self.drone.neighbor_table[j, 6]
         t3 = self.simulator.cur_step + delay
-        # predicted position of j at arrival
         x = x1 + node_j.speed * math.cos(angle_j) * (t3 - t1)
         y = y1 + node_j.speed * math.sin(angle_j) * (t3 - t1)
         distance_j = math.dist((x, y), self.simulator.depot_coordinates)
@@ -155,7 +132,7 @@ class MockDrone:
         self.initial_energy = 100.0
         self.speed = speed
         self.neighbor_table = np.zeros((max_drones, 13))
-        self.neighbor_table[:, 9] = 0.5          # initial Q-values
+        self.neighbor_table[:, 9] = 0.5
         self.communication_range = comm_range
 
 class MockSimulator:
@@ -170,14 +147,13 @@ class MockPacket:
 
 
 # ================== 3. Random geometric graph ==================
-def build_random_graph(n_nodes, width, length, comm_range, seed=42):
+def build_random_graph(n_nodes, width, length, comm_range, seed):
     random.seed(seed)
     G = nx.DiGraph()
-
     for i in range(n_nodes):
         x = random.uniform(0, width)
         y = random.uniform(0, length)
-        energy = random.randint(10, 100)   # %
+        energy = random.randint(0, 100)
         G.add_node(i, coords=(x, y), energy=energy)
 
     for i in range(n_nodes):
@@ -188,40 +164,15 @@ def build_random_graph(n_nodes, width, length, comm_range, seed=42):
             xj, yj = G.nodes[j]['coords']
             dist = math.dist((xi, yi), (xj, yj))
             if dist < comm_range:
-                delay = dist * 0.1   # ms/m
+                delay = dist * 0.1
                 G.add_edge(i, j, delay=delay)
     return G
 
 
-# ================== 4. Visualization function ==================
-def visualize_graph(G):
-    """Draw the graph with node IDs, energy and edge delays."""
-    pos = {i: G.nodes[i]['coords'] for i in G.nodes()}
-    plt.figure(figsize=(8, 6))
-    nx.draw_networkx_nodes(G, pos, node_color='lightblue', node_size=500)
-    node_labels = {i: f"{i}\n({G.nodes[i]['energy']}%)" for i in G.nodes()}
-    nx.draw_networkx_labels(G, pos, labels=node_labels, font_size=8)
-    nx.draw_networkx_edges(G, pos, edge_color='gray', arrows=True, arrowsize=10,
-                           connectionstyle='arc3, rad=0.1')
-    edge_labels = {(u, v): f"{d['delay']:.1f} ms" for u, v, d in G.edges(data=True)}
-    nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels, font_color='red', font_size=7)
-    plt.title("Random Geometric Graph")
-    plt.axis('off')
-    plt.tight_layout()
-
-    try:
-        plt.show()
-    except:
-        plt.savefig("random_graph.png", dpi=150)
-        print("Graph saved as 'random_graph.png' – open it to see the topology.")
-
-
-# ================== 5. Convert graph to mock drones ==================
+# ================== 4. Convert graph to mock drones ==================
 def graph_to_mock_2d(G, depot_coords=None, comm_range=200):
     nodes = list(G.nodes())
     n = len(nodes)
-    name_to_id = {i: i for i in nodes}   # IDs are integers
-    id_to_name = name_to_id
     max_drones = n
 
     drones = []
@@ -234,14 +185,13 @@ def graph_to_mock_2d(G, depot_coords=None, comm_range=200):
         drones.append(drone)
         drone_dict[node] = drone
 
-    # Fill neighbour tables from edges (both directions)
     for u, v, data in G.edges(data=True):
         delay = data['delay']
         # u -> v
         src = drone_dict[u]
         dst = drone_dict[v]
         tbl = src.neighbor_table
-        tbl[v, 0] = dst.coords[0] - 10   # fake previous x
+        tbl[v, 0] = dst.coords[0] - 10
         tbl[v, 1] = dst.coords[1] - 10
         tbl[v, 4] = dst.coords[0]
         tbl[v, 5] = dst.coords[1]
@@ -272,26 +222,23 @@ def graph_to_mock_2d(G, depot_coords=None, comm_range=200):
     if depot_coords is None:
         depot_coords = (0, 0)
     sim = MockSimulator(drones, depot_coords)
-    return sim, drone_dict, name_to_id, id_to_name
+    return sim, drone_dict
 
 
-# ================== 6. Forward packet ==================
-def forward_packet(start_id, dest_id, drone_dict, qmar_dict, sim):
+# ================== 5. Forward packet ==================
+def forward_packet(start_id, dest_id, drone_dict, qmar_dict, sim, mode):
     current_id = start_id
     path = [current_id]
     prev_id = None
 
-    for _ in range(20):          # max hops
+    for _ in range(20):
         if current_id == dest_id:
             break
-
         if current_id not in qmar_dict:
-            qmar_dict[current_id] = QMAR(drone_dict[current_id], sim, mode=args.mode)
-
+            qmar_dict[current_id] = QMAR(drone_dict[current_id], sim, mode)
         qmar = qmar_dict[current_id]
         current_drone = drone_dict[current_id]
 
-        # neighbors (non-zero delay, exclude self and previous)
         neighbor_rows = np.where(current_drone.neighbor_table[:, 8] != 0)[0]
         opt_neighbors = [drone_dict[i] for i in neighbor_rows
                          if i != current_id and i != prev_id]
@@ -305,77 +252,78 @@ def forward_packet(start_id, dest_id, drone_dict, qmar_dict, sim):
 
         next_id = chosen.identifier
         path.append(next_id)
-
-        # feedback
         chosen_drone = drone_dict[next_id]
         max_q = np.max(chosen_drone.neighbor_table[:, 9]) if np.any(chosen_drone.neighbor_table[:, 9]) else 0.5
         qmar.feedback(0, next_id, max_q)
-
         prev_id = current_id
         current_id = next_id
 
     return path
 
 
-# ================== 7. Main ==================
+# ================== 6. Single simulation run ==================
+def run_single(n_nodes, width, length, comm_range, packets, seed, mode):
+    """Return the average bottleneck energy (lifetime) across packets."""
+    G = build_random_graph(n_nodes, width, length, comm_range, seed)
+
+    # Choose random source and destination (different nodes)
+    nodes_list = list(G.nodes())
+    src, dst = random.sample(nodes_list, 2)
+
+    depot_coords = G.nodes[dst]['coords']
+    sim, drone_dict = graph_to_mock_2d(G, depot_coords, comm_range)
+
+    qmar_dict = {}
+    lifetimes = []
+
+    for _ in range(packets):
+        path_ids = forward_packet(src, dst, drone_dict, qmar_dict, sim, mode)
+        if len(path_ids) < 2:   # no route or only source
+            lifetimes.append(0.0)   # worst case: path dead
+        else:
+            energies = [G.nodes[n]['energy'] for n in path_ids]
+            bottleneck = min(energies)
+            lifetimes.append(bottleneck)
+
+    return np.mean(lifetimes) if lifetimes else 0.0
+
+
+# ================== 7. Batch experiment ==================
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='QMR on random geometric graph')
-    parser.add_argument('-m', '--mode', choices=['fixed', 'dynamic'], default='fixed')
+    parser = argparse.ArgumentParser(description='Batch QMR lifetime vs nodes')
+    parser.add_argument('-m', '--mode', choices=['fixed', 'dynamic'], default='dynamic')
+    parser.add_argument('--min-nodes', type=int, default=5)
+    parser.add_argument('--max-nodes', type=int, default=30)
+    parser.add_argument('--step', type=int, default=5)
     parser.add_argument('-W', '--width', type=float, default=500.0)
     parser.add_argument('-L', '--length', type=float, default=500.0)
-    parser.add_argument('-n', '--nodes', type=int, default=10)
     parser.add_argument('-r', '--range', type=float, default=200.0)
     parser.add_argument('-p', '--packets', type=int, default=50)
-    parser.add_argument('--seed', type=int, default=42)
+    parser.add_argument('--seeds', type=int, default=10, help='Number of random seeds per node count')
     args = parser.parse_args()
 
-    print(f"Mode: {args.mode.upper()} ω")
-    print("Assumption: 1% battery = 1 minute of activity\n")
+    node_counts = list(range(args.min_nodes, args.max_nodes + 1, args.step))
+    avg_lifetimes = []
+    std_lifetimes = []
 
-    # Build random graph
-    G = build_random_graph(args.nodes, args.width, args.length, args.range, seed=args.seed)
+    print(f"Running batch experiment: mode={args.mode}, nodes={args.min_nodes}..{args.max_nodes} step {args.step}, seeds={args.seeds}")
+    print(f"Area {args.width}x{args.length}, range {args.range}, packets {args.packets}")
 
-    # Show the graph
-    visualize_graph(G)
+    for n in node_counts:
+        values = []
+        for s in range(args.seeds):
+            seed = s * 100 + n   # spread seeds
+            avg_life = run_single(n, args.width, args.length, args.range, args.packets, seed, args.mode)
+            values.append(avg_life)
+        mean_val = np.mean(values)
+        std_val = np.std(values)
+        avg_lifetimes.append(mean_val)
+        std_lifetimes.append(std_val)
+        print(f"  n={n:3d}: avg lifetime {mean_val:.1f} min (±{std_val:.1f})")
 
-    # ---------- User chooses source / destination ----------
-    default_source = 0
-    default_dest = args.nodes - 1
-    try:
-        src_input = input(f"Source node (default {default_source}): ").strip()
-        source = int(src_input) if src_input else default_source
-        dst_input = input(f"Destination node (default {default_dest}): ").strip()
-        dest = int(dst_input) if dst_input else default_dest
-    except (ValueError, EOFError):
-        source, dest = default_source, default_dest
-
-    if source not in G.nodes() or dest not in G.nodes():
-        print("Invalid node IDs, using defaults.")
-        source, dest = default_source, default_dest
-
-    print(f"Source: {source}, Destination: {dest}\n")
-
-    # ---------- Convert to mock environment ----------
-    depot_coords = G.nodes[dest]['coords']
-    sim, drone_dict, name_to_id, id_to_name = graph_to_mock_2d(G, depot_coords, comm_range=args.range)
-
-    # ---------- Run simulation ----------
-    qmar_dict = {}
-    lifetimes = []                              # <-- new list
-
-    for pkt in range(1, args.packets + 1):
-        path_ids = forward_packet(source, dest, drone_dict, qmar_dict, sim)
-        path_str = ' → '.join(str(n) for n in path_ids)
-        print(f"Packet {pkt}: {path_str}")
-
-        energies = [G.nodes[n]['energy'] for n in path_ids]
-        bottleneck = min(energies)
-        lifetimes.append(bottleneck)            # <-- store lifetime
-        print(f"         Bottleneck energy: {bottleneck}% → lifetime {bottleneck} min")
-
-    # After all packets, compute and print the average lifetime
-    if lifetimes:
-        avg_lifetime = sum(lifetimes) / len(lifetimes)
-        print(f"\nAverage path lifetime: {avg_lifetime:.1f} min")
-    else:
-        print("\nNo packets delivered, cannot compute average lifetime.")
+    # Save data
+    data = np.column_stack((node_counts, avg_lifetimes, std_lifetimes))
+    # Save data to CSV
+    csv_filename = f'batch_results_{args.mode}.csv'
+    np.savetxt(csv_filename, data, header='nodes,avg_lifetime,std_lifetime', delimiter=',', comments='')
+    print(f"Saved {csv_filename}")
