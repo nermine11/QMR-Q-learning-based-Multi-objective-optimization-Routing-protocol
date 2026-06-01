@@ -177,7 +177,7 @@ if __name__ == "__main__":
     else:
         from qmr_dynamic_w import QMAR
         print(f"Running with DYNAMIC ω (own battery < 50% → ω=0.8, else ω=0.3)")
-    print("We assume: 1% battery = 1 minute of activity\n")
+    print("Assumption: 1% battery = 1 minute of activity\n")
     G = build_graph()
     sim, drone_dict, name_to_id, id_to_name = graph_to_mock_2d(G)
 
@@ -196,4 +196,4 @@ if __name__ == "__main__":
         # Compute path bottleneck energy (minimum remaining energy along the path)
         path_energies = [G.nodes[name]['energy'] for name in path_names]
         bottleneck = min(path_energies)
-        print(f"         Bottleneck energy: {bottleneck}% → lifetime: {bottleneck} min ")
+        print(f"         Bottleneck energy: {bottleneck}% → lifetime {bottleneck} min (if 1% = 1 min)")
