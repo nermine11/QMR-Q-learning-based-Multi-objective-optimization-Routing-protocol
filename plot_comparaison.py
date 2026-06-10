@@ -2,8 +2,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # Load the two CSV files (adjust filenames if needed)
-fixed = np.loadtxt('batch_results_fixed.csv', delimiter=',', skiprows=1)
-dynamic = np.loadtxt('batch_results_dynamic.csv', delimiter=',', skiprows=1)
+fixed = np.loadtxt('experiment_full_fixed.csv', delimiter=',', skiprows=1)
+dynamic = np.loadtxt('experiment_full_dynamic.csv', delimiter=',', skiprows=1)
 
 # Extract columns
 nodes_fixed, avg_fixed, std_fixed = fixed[:,0], fixed[:,1], fixed[:,2]
