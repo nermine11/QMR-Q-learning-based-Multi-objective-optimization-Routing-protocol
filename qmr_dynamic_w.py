@@ -64,11 +64,13 @@ class QMAR(BASE_routing):
         norm_delay = delay / self.max_delay
         exp_delay = math.exp(-norm_delay)   
 
-        # 4. DYNAMIC WEIGHT – based on THIS drone's own battery
+        # 4. DYNAMIC WEIGHT: based on this drone's own battery
         my_energy_ratio = self.drone.residual_energy / self.drone.initial_energy
         if my_energy_ratio < 0.5:          # low battery → prioritise speed
+            print("same")
             dynamic_w = 0.8
-        else:                              # high battery → prioritise neighbour energy
+        else:    
+            print("dynamic")                          # high battery → prioritise neighbour energy
             dynamic_w = 0.3
 
         # 5 Combine into the reward

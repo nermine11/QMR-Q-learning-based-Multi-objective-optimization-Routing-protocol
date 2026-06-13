@@ -1,25 +1,40 @@
+import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+from scipy.interpolate import UnivariateSpline
 
-# Load the two CSV files (adjust filenames if needed)
-fixed = np.loadtxt('experiment_full_fixed.csv', delimiter=',', skiprows=1)
-dynamic = np.loadtxt('experiment_full_dynamic.csv', delimiter=',', skiprows=1)
+# Load both CSV files
+fixed = pd.read_csv('experiment_full_fixed.csv')
+dynamic = pd.read_csv('experiment_full_dynamic.csv')
 
-# Extract columns
-nodes_fixed, avg_fixed, std_fixed = fixed[:,0], fixed[:,1], fixed[:,2]
-nodes_dyn, avg_dyn, std_dyn = dynamic[:,0], dynamic[:,1], dynamic[:,2]
+nodes_fixed = fixed['nodes'].values
+lifetime_fixed = fixed['avg_lifetime_min'].values
+nodes_dyn = dynamic['nodes'].values
+lifetime_dyn = dynamic['avg_lifetime_min'].values
 
-# Plot
-plt.figure(figsize=(8, 5))
-plt.errorbar(nodes_fixed, avg_fixed, yerr=None, marker='o', capsize=5,
-             label='Fixed ω = 0.8', color='blue')
-plt.errorbar(nodes_dyn, avg_dyn, yerr=None, marker='s', capsize=5,
-             label='Dynamic ω', color='red')
-plt.xlabel('Number of nodes')
-plt.ylabel('Average path lifetime (min)')
-plt.title('QMR lifetime: fixed vs dynamic ω')
-plt.grid(True, linestyle='--', alpha=0.7)
+# Smoothing factor : controls the trade‑off between closeness to data and smoothness.
+# We can increase s for a smoother curve ( 1.0 to 5.0)
+s = 1.0
+
+# Create smoothing splines (piecewise cubic, Bézier‑like)
+spline_fixed = UnivariateSpline(nodes_fixed, lifetime_fixed, s=s)
+spline_dyn   = UnivariateSpline(nodes_dyn, lifetime_dyn, s=s)
+
+# Dense x‑axis for a perfectly smooth line
+x_dense = np.linspace(nodes_fixed.min(), nodes_fixed.max(), 300)
+
+plt.figure(figsize=(8,5))
+
+
+
+# Smooth Bézier‑like curves
+plt.plot(x_dense, spline_fixed(x_dense), '-', color='blue', linewidth=2, label='Fixed ω')
+plt.plot(x_dense, spline_dyn(x_dense), '--', color='red', linewidth=2, label='Dynamic ω')
+
+plt.xlabel('Number of drones')
+plt.ylabel('Average bottleneck lifetime (min)')
 plt.legend()
+plt.grid(True, linestyle='--', alpha=0.7)
 plt.tight_layout()
-plt.savefig('comparison_lifetime.png', dpi=150)
+plt.savefig('comparaison1000.png', dpi=150)
 plt.show()

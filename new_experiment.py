@@ -1,13 +1,28 @@
+"""
+
+Experiment using QMR
+Setup:
+- Same destintation not a node but a ground station (no energy, can't relay packets)
+- the number of nodes nb_nodes in the experiment goes from 1 to 49 
+- For each n nb_nodes we create 1-50 topologies
+- For each topology, each node becomes a source and sends 1000 packets to the destination
+- We count the average of lifetimes of each path: whichi is the bottlenck energy of the path ( the least energy of a drone in the path)
+We do these two experiments for w_dynamic and w_fixed
+
+"""
 
 import argparse
 import math
 import random
 import numpy as np
 import networkx as nx
+import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
+import sys
 
 IDLE_ENERGY = 10.0
 TRANSMISSION_ENERGY = 15.0
-TOPOLOGIES_PER_COUNT = 50
+TOPOLOGIES_PER_COUNT = 49
 NB_ATTEMPTS = 500
 # ================== 1. QMAR class ==================
 class QMAR:
@@ -45,7 +60,12 @@ class QMAR:
 
         if self.mode == 'dynamic':
             my_energy_ratio = self.drone.residual_energy / self.drone.initial_energy
-            w = 0.9 if my_energy_ratio < 0.5 else 0.3
+            print(my_energy_ratio)
+            if my_energy_ratio < 0.5:          # low battery → prioritise speed
+                w = 0.8
+            else:    
+                                         # high battery → prioritise neighbour energy
+                w = 0.3
         else:
             w = 0.8
         return w * exp_delay + (1 - w) * e_neighbor
@@ -55,6 +75,11 @@ class QMAR:
         candidates = []
         candidates2 = []
 
+        # Always print debug info for any drone that runs relay_selection
+        #print(f"\n[DEBUG] Drone {self.drone.identifier} selecting next hop")
+        #print(f"  My residual energy: {self.drone.residual_energy:.2f}%")
+        #print(f"  My position: {self.drone.coords}, Depot: {self.simulator.depot_coordinates}")
+
         for node_j in self.simulator.drones:
             if node_j not in opt_neighbors:
                 continue
@@ -63,38 +88,51 @@ class QMAR:
             if deadline <= 0:
                 deadline = 1
             dist_i = math.dist(self.drone.coords, self.simulator.depot_coordinates)
-            req_v = dist_i / deadline
+            req_v = dist_i / deadline # required velocity to reach destination
             actual_v, dist_ij = self.computeActualVel(j, node_j, dist_i)
 
+            #print(f"  Neighbor {j}: residual_energy={node_j.residual_energy:.2f}%, dist_ij={dist_ij:.1f}, actual_v={actual_v:.3f}, req_v={req_v:.3f}")
+
             if actual_v >= req_v:
-                LQ = self.drone.neighbor_table[j, 12]
+                LQ = self.drone.neighbor_table[j, 12] # always 1
                 R = self.drone.communication_range
                 M = 0 if dist_ij > R else 1 - (dist_ij / R)
-                k = M * LQ
+                k= M * LQ
                 candidates.append((node_j, k))
+                #print(f"    -> candidate: M={M:.3f}, LQ={LQ:.3f}, k={k:.3f}")
             elif actual_v > 0:
                 candidates2.append((node_j, actual_v))
+                #print(f"    -> secondary list (actual_v>0 but < req_v)")
+            else:
+                pass
+                #print(f"    -> discarded (actual_v <= 0)")
 
         if not candidates:
             if candidates2:
                 chosen = max(candidates2, key=lambda x: x[1])[0]
             else:
+                #print(f"  No candidates at all -> RHP")
                 return "RHP"
         else:
-            best_candidates = []
-            maxx = -float('inf')
-            for cand, k in candidates:
-                Q_val = self.drone.neighbor_table[cand.identifier, 9]
-                weighted = Q_val * k
-                if weighted > maxx:
-                    maxx = weighted
-                    best_candidates = [cand]
-                elif weighted == maxx:
-                    best_candidates.append(cand)
-            chosen = random.choice(best_candidates)
+                maxx = -100000
+                chosen = None
+                #print("  Candidate scores:")
+                for i in range(len(candidates)):
+                    candidate = candidates[i][0]
+                    k = candidates[i][1]
+                    Q_val = self.drone.neighbor_table[candidate.identifier, 9]
+                    weighted = Q_val * k
+                    #print(f"    {candidate.identifier}: Q={Q_val:.3f}, k={k:.3f}, weighted={weighted:.3f}")
+                    if (Q_val * k > maxx):
+                        chosen = candidate
+                        maxx = Q_val * k
 
         if random.random() < 0.1 and opt_neighbors:
+            prev = chosen
             chosen = random.choice(opt_neighbors)
+            #print(f"  ε-greedy override: was {prev.identifier if prev else 'None'}, now randomly picked {chosen.identifier}")
+
+        #print(f"  Final choice: {chosen.identifier if chosen != 'RHP' else 'RHP'}\n")
         return chosen
 
     def computeActualVel(self, j, node_j, distance_i):
@@ -225,7 +263,7 @@ def build_connected_graph(n_nodes, width, length, comm_range, seed, min_dist=10.
 # =============================================================================
 # 4. Convert graph to mock drones (station is NOT a drone)
 # =============================================================================
-def graph_to_mock_2d(G, station_id, comm_range=200):
+def graph_to_mock_2d(G, station_id, mode, comm_range=200):
     drones = []
     drone_dict = {}
     max_drones = len(G.nodes())
@@ -276,7 +314,13 @@ def graph_to_mock_2d(G, station_id, comm_range=200):
         tbl[u,10] = 0.3
         tbl[u,11] = 0
         tbl[u,12] = 1.0
-
+    if mode =='dynamic':
+        for drone in drones:
+            for nbr in range(max_drones):
+                if drone.neighbor_table[nbr, 8] != 0:   # neighbour exists (delay > 0)
+                    if nbr != station_id:                # skip the ground station
+                        # Column 9 = Q‑value; set it to energy ratio (0…1)
+                        drone.neighbor_table[nbr, 9] = drone_dict[nbr].residual_energy / 100.0
     depot_coords = G.nodes[station_id]['coords']
     sim = MockSimulator(drones, depot_coords)
     return sim, drone_dict
@@ -349,7 +393,7 @@ def simulate_source(G, station_id, src_id, comm_range, mode, packets=1000, cbr_i
     Return average lifetime in minutes over all delivered packets.
     """
     time_per_packet_min = (cbr_interval_ms / 1000.0) / 60.0
-    sim, drone_dict = graph_to_mock_2d(G, station_id, comm_range)
+    sim, drone_dict = graph_to_mock_2d(G, station_id, mode, comm_range)
     src_drone = drone_dict[src_id]
 
     qmar_dict = {}
@@ -367,7 +411,8 @@ def simulate_source(G, station_id, src_id, comm_range, mode, packets=1000, cbr_i
             continue   # packet failed, skip
 
         # Get energies of all drones on the path (exclude station)
-        energies = [G.nodes[n]['energy'] for n in path if n != station_id]
+        # Get the current energy of the drone
+        energies = [drone_dict[n].residual_energy for n in path if n != station_id]        
         if not energies:
             continue
         min_energy = min(energies)
@@ -414,6 +459,120 @@ def run_for_node_count(n_nodes, width, length, comm_range, mode, packets, cbr_in
     return np.mean(all_lifetimes), np.std(all_lifetimes)
 
 
+
+
+def visualize_source_paths(G, station_id, src_id, comm_range, mode,
+                           packets=1000, cbr_interval_ms=200, max_paths=10):
+    """
+    Simulate a single source and collect distinct paths.
+    Draw the network with the station in red and each distinct path in a different colour.
+    """
+    time_per_packet_min = (cbr_interval_ms / 1000.0) / 60.0
+    sim, drone_dict = graph_to_mock_2d(G, station_id, mode ,comm_range)
+    src_drone = drone_dict[src_id]
+    #src_drone.residual_energy = 90.0
+    #src_drone.initial_energy = 100.0
+    qmar_dict = {}
+    distinct_paths = set()          # use tuples of node IDs to store unique paths
+    all_paths_ordered = []          # store paths in order of first occurrence
+
+    # send 1000 packets and see the paths taken
+    for _ in range(packets):
+        # Apply idle drain (same as simulate_source)
+        for d in drone_dict.values():
+            d.consume_energy_idle(time_per_packet_min)
+        if src_drone.residual_energy <= 0:
+            break
+
+        path = forward_packet_with_energy(src_id, station_id, drone_dict, qmar_dict, sim, mode)
+        if path is None or path[-1] != station_id:
+            continue
+
+        # Convert to tuple (hashable) and check if it's new
+        path_tuple = tuple(path)
+        if path_tuple not in distinct_paths:
+            distinct_paths.add(path_tuple)
+            all_paths_ordered.append(list(path_tuple))   # store as list for later
+            if len(distinct_paths) >= max_paths:
+                break
+
+    if not all_paths_ordered:
+        print("No successful paths found – cannot visualise.")
+        return
+    else:
+        print(all_paths_ordered)
+    # ---------- Drawing ----------
+    pos = {node: G.nodes[node]['coords'] for node in G.nodes()}
+    plt.figure(figsize=(10, 8))
+
+    # Draw all edges in light grey
+    nx.draw_networkx_edges(G, pos, edge_color='lightgrey', arrows=True, arrowsize=10)
+
+    # Draw all drones (exclude station) in light blue
+    drone_nodes = [n for n in G.nodes() if n != station_id]
+    nx.draw_networkx_nodes(G, pos, nodelist=drone_nodes, node_color='lightblue', node_size=400)
+
+    # Draw the ground station in red (larger size)
+    nx.draw_networkx_nodes(G, pos, nodelist=[station_id], node_color='red', node_size=600,
+                           node_shape='s')   # square for distinction
+
+    # Label all nodes with ID and energy (for drones) / "Station" for station
+    node_labels = {}
+    for n in G.nodes():
+        if n == station_id:
+            node_labels[n] = "Station"
+        else:
+            node_labels[n] = f"{n}\n({G.nodes[n]['energy']}%)"
+    nx.draw_networkx_labels(G, pos, labels=node_labels, font_size=7)
+
+    # Colour map for paths
+    colors = plt.cm.tab10(np.linspace(0, 1, len(all_paths_ordered)))
+
+    # Draw each path with a different colour
+    for idx, path in enumerate(all_paths_ordered):
+        # edges of the path
+        path_edges = [(path[i], path[i+1]) for i in range(len(path)-1)]
+        nx.draw_networkx_edges(G, pos, edgelist=path_edges, edge_color=[colors[idx]],
+                               width=2.5, arrows=True, arrowsize=15)
+
+        # highlight nodes on the path (except station, which is already red)
+        path_nodes = [n for n in path if n != station_id]
+        nx.draw_networkx_nodes(G, pos, nodelist=path_nodes, node_color=[colors[idx]],
+                               node_size=400, alpha=0.6)
+
+    # Create a simple legend for the paths
+    legend_handles = [Line2D([0], [0], color=colors[i], lw=2, label=f'Path {i+1}')
+                      for i in range(len(all_paths_ordered))]
+    plt.legend(handles=legend_handles, loc='upper left', fontsize='small')
+
+    plt.title(f"QMR paths from {src_id} to station (mode={mode})")
+    plt.axis('off')
+    plt.tight_layout()
+    plt.savefig(f'path_visualization_{mode}.png', dpi=150)
+    plt.show()
+
+def build_illustrative_graph():
+    G = nx.DiGraph()
+    
+    # Use integer IDs with a name map
+    # A=0, B=1, C=2, D=3, E=4
+    id_map = {"A": 0, "B": 1, "C": 2, "D": 3, "E": 4}
+    
+    G.add_node(0, coords=(500, 0), energy=80)
+    G.add_node(1, coords=(350, 0), energy=30)
+    G.add_node(2, coords=(400, 150), energy=100)
+    G.add_node(3, coords=(0, 0), energy=float('inf'))   # station
+    G.add_node(4, coords=(200, 150), energy=100)
+    
+    G.add_edge(0, 1, delay=5)
+    G.add_edge(0, 2, delay=25)
+    G.add_edge(1, 3, delay=25)
+    G.add_edge(2, 4, delay=25)
+    G.add_edge(4, 3, delay=25)
+    
+    return G, 3   # station ID = 3
+
+
 # =============================================================================
 # 8. Main batch experiment
 # =============================================================================
@@ -421,7 +580,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Full energy‑aware QMR with bottleneck lifetime')
     parser.add_argument('-m', '--mode', choices=['fixed', 'dynamic'], default='dynamic')
     parser.add_argument('--min-nodes', type=int, default=1)
-    parser.add_argument('--max-nodes', type=int, default=49)
+    parser.add_argument('--max-nodes', type=int, default=199)
     parser.add_argument('--step', type=int, default=1)
     parser.add_argument('-W', '--width', type=float, default=500.0)
     parser.add_argument('-L', '--length', type=float, default=500.0)
@@ -429,8 +588,50 @@ if __name__ == "__main__":
     parser.add_argument('-p', '--packets', type=int, default=1000)
     parser.add_argument('--cbr-interval', type=float, default=200.0, help='CBR interval (ms)')
     parser.add_argument('--seed', type=int, default=42)
+    parser.add_argument('--visualize', action='store_true',
+                        help='Visualize paths for a single source instead of running the batch experiment')
+    parser.add_argument('--vis-nodes', type=int, default=8,
+                        help='Number of drones for the visualisation (used with --visualize)')
+    parser.add_argument('--vis-source', type=int, default=0,
+                        help='Source node for the visualisation')
+    parser.add_argument('--vis-seed', type=int, default=42,
+                        help='Random seed for the topology in visualisation')
+    parser.add_argument('--vis-range', type=float, default=None,
+                    help='Communication range for visualization (default: same as --range)')
     args = parser.parse_args()
 
+    """
+    python3 new_experiment.py --visualize 
+    --mode dynamic --vis-nodes 10 --vis-source 3 --vis-seed 42 --vis-range 120
+    """
+    if args.visualize:
+        # ---- Visualisation mode ----
+        print(f"Visualisation: nodes={args.vis_nodes}, source={args.vis_source}, seed={args.vis_seed}")
+        vis_range = args.vis_range if args.vis_range is not None else args.range
+        result = build_connected_graph(args.vis_nodes, args.width, args.length,
+                                    vis_range, args.vis_seed, min_dist=10.0)
+        if result is None:
+            print("Could not generate a connected topology with the given parameters.")
+            sys.exit(1)
+        G, station_id = result
+        # Use the hand‑crafted topology instead of a random one
+        G, station_id = build_illustrative_graph()
+    
+        # The source is always "A" in this example
+        src = 0
+        # ---- Fixed ω ----
+        print("\n--- Fixed ω ---")
+        visualize_source_paths(G, station_id, args.vis_source, vis_range, 'fixed',
+                            packets=args.packets, cbr_interval_ms=args.cbr_interval,
+                            max_paths=10)
+
+        # ---- Dynamic ω ----
+        print("\n--- Dynamic ω ---")
+        visualize_source_paths(G, station_id, args.vis_source, vis_range, 'dynamic',
+                            packets=args.packets, cbr_interval_ms=args.cbr_interval,
+                            max_paths=10)
+
+        sys.exit(0)
     node_counts = list(range(args.min_nodes, args.max_nodes + 1, args.step))
     avg_lifetimes = []
     std_lifetimes = []
