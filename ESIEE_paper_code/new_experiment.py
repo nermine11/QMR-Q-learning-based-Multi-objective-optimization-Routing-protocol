@@ -554,7 +554,7 @@ def visualize_source_paths(G, station_id, src_id, comm_range, mode,
                       for i in range(len(all_paths_ordered))]
     plt.legend(handles=legend_handles, loc='upper left', fontsize='small')
 
-    plt.title(f"QMR paths from {src_id} to station (mode={mode})")
+    plt.title(f"QMR paths from {src_id} to Station")
     plt.axis('off')
     plt.tight_layout()
     plt.savefig(f'path_visualization_{mode}.png', dpi=150)
